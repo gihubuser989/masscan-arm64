@@ -1,0 +1,128 @@
+name: Build and test masscan (aarch64, native)
+
+# Builds the static masscan binary on a NATIVE ARM64 runner (no QEMU),
+# using the original, unmodified Dockerfile + patch, then runs a real
+# port-discovery test in five different distro containers.
+# Any failed check fails the whole run - nothing is silently skipped.
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Confirm native ARM64 runner
+        run: |
+          uname -m
+          test "$(uname -m)" = "aarch64"
+          docker version
+
+      - name: Guard - Dockerfile must be the clean (non-QEMU-hacked) one
+        run: |
+          if grep -qE "disable-packet-ring|ENOTTY|ENOPROTOOPT" Dockerfile; then
+            echo "Dockerfile contains QEMU workarounds. Use the clean x86_64 Dockerfile." >&2
+            exit 1
+          fi
+          test -f masscan-staticpcap-fix.patch
+
+      - name: Build static binary
+        run: docker build -t masscan-arm64 .
+
+      - name: Extract binary
+        run: |
+          cid=$(docker create masscan-arm64)
+          docker cp "$cid:/masscan/bin/masscan" ./masscan-aarch64
+          docker rm "$cid"
+          chmod +x masscan-aarch64
+
+      - name: Verify binary properties
+        run: |
+          set -euo pipefail
+          file masscan-aarch64 | tee /tmp/file.txt
+          grep -q "ARM aarch64" /tmp/file.txt
+          grep -q "statically linked" /tmp/file.txt
+          if ldd masscan-aarch64 2>&1 | grep -qv "not a dynamic executable"; then
+            echo "Binary is not fully static" >&2; exit 1
+          fi
+          # no runtime dlopen of libpcap
+          if strings -a masscan-aarch64 | grep -qi "libpcap\.so"; then
+            echo "Found libpcap.so string - dlopen path present" >&2; exit 1
+          fi
+          # standard libpcap with the packet ring, not the QEMU variant
+          strings -a masscan-aarch64 | grep "libpcap version" | tee /tmp/pcapver.txt
+          if grep -q "without TPACKET" /tmp/pcapver.txt; then
+            echo "libpcap built without TPACKET ring" >&2; exit 1
+          fi
+          ./masscan-aarch64 --version
+
+      - name: Real discovery test across distros (native ARM64)
+        run: |
+          set -uo pipefail
+          docker rm -f t1 2>/dev/null || true
+          docker run -d --rm --name t1 nginx
+          sleep 3
+          ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' t1)
+          echo "nginx container IP: $ip"
+
+          fail=0
+          : > results.txt
+          for img in ubuntu:20.04 ubuntu:24.04 debian:12 fedora:latest alpine:latest; do
+            echo "=================== $img"
+            out=$(timeout 90 docker run --rm --network host \
+                  --cap-add NET_RAW --cap-add NET_ADMIN \
+                  -v "$PWD:/d" "$img" /d/masscan-aarch64 "$ip" -p 80,443 \
+                  -e docker0 --router-ip "$ip" --rate 100 --wait 3 2>&1)
+            rc=$?
+            echo "$out" | tr '\r' '\n'
+            echo "exit code: $rc"
+            if echo "$out" | grep -q "Discovered open port 80/tcp on $ip" \
+               && ! echo "$out" | grep -qi "segmentation"; then
+              echo "$img: PASS (exit $rc)" | tee -a results.txt
+            else
+              echo "$img: FAIL (exit $rc)" | tee -a results.txt
+              fail=1
+            fi
+          done
+
+          # also run directly on the host (as root)
+          echo "=================== host"
+          out=$(sudo timeout 90 ./masscan-aarch64 "$ip" -p 80,443 \
+                -e docker0 --router-ip "$ip" --rate 100 --wait 3 2>&1)
+          rc=$?
+          echo "$out" | tr '\r' '\n'
+          if echo "$out" | grep -q "Discovered open port 80/tcp on $ip"; then
+            echo "host: PASS (exit $rc)" | tee -a results.txt
+          else
+            echo "host: FAIL (exit $rc)" | tee -a results.txt
+            fail=1
+          fi
+
+          docker rm -f t1 || true
+          cat results.txt >> "$GITHUB_STEP_SUMMARY"
+          exit $fail
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f t1 2>/dev/null || true
+
+      - name: Package
+        run: |
+          sha256sum masscan-aarch64 | tee SHA256SUMS
+          tar -czf masscan-aarch64.tar.gz masscan-aarch64 SHA256SUMS Dockerfile masscan-staticpcap-fix.patch
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: masscan-aarch64
+          path: |
+            masscan-aarch64.tar.gz
+            SHA256SUMS
+            results.txt
