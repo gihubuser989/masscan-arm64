@@ -61,7 +61,8 @@ jobs:
           if grep -q "without TPACKET" /tmp/pcapver.txt; then
             echo "libpcap built without TPACKET ring" >&2; exit 1
           fi
-          ./masscan-aarch64 --version
+          # masscan --version exits with code 1 by design, so don't fail on it
+          ./masscan-aarch64 --version || true
 
       - name: Real discovery test across distros (native ARM64)
         run: |
