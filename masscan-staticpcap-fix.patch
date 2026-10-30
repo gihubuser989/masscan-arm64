@@ -1,0 +1,70 @@
+diff --git a/src/stub-pcap.c b/src/stub-pcap.c
+index 3a4c02e..3340a1e 100644
+--- a/src/stub-pcap.c
++++ b/src/stub-pcap.c
+@@ -63,6 +63,38 @@ struct pcap_if {
+     unsigned flags;	/* PCAP_IF_ interface flags */
+ };
+ 
++#ifdef STATICPCAP
++/* Prototypes for the libpcap functions called directly in STATICPCAP mode.
++ * Without them C assumes an int return value and truncates 64-bit pointers. */
++struct pcap_if;
++extern void pcap_close(pcap_t *p);
++extern int pcap_datalink(pcap_t *p);
++extern const char *pcap_datalink_val_to_name(int dlt);
++extern int pcap_dispatch(pcap_t *p, int cnt, PCAP_HANDLE_PACKET callback, unsigned char *user);
++extern int pcap_findalldevs(struct pcap_if **alldevsp, char *errbuf);
++extern void pcap_freealldevs(struct pcap_if *alldevs);
++extern char *pcap_geterr(pcap_t *p);
++extern const char *pcap_lib_version(void);
++extern char *pcap_lookupdev(char *errbuf);
++extern int pcap_major_version(pcap_t *p);
++extern int pcap_minor_version(pcap_t *p);
++extern const unsigned char *pcap_next(pcap_t *p, struct pcap_pkthdr *h);
++extern pcap_t *pcap_open_live(const char *device, int snaplen, int promisc, int to_ms, char *errbuf);
++extern pcap_t *pcap_open_offline(const char *fname, char *errbuf);
++extern int pcap_sendpacket(pcap_t *p, const unsigned char *buf, int size);
++extern int pcap_setdirection(pcap_t *p, int d);
++extern pcap_t *pcap_create(const char *source, char *errbuf);
++extern int pcap_set_snaplen(pcap_t *p, int snaplen);
++extern int pcap_set_promisc(pcap_t *p, int promisc);
++extern int pcap_set_timeout(pcap_t *p, int to_ms);
++extern int pcap_set_immediate_mode(pcap_t *p, int immediate_mode);
++extern int pcap_set_buffer_size(pcap_t *p, int buffer_size);
++extern int pcap_set_rfmon(pcap_t *p, int rfmon);
++extern int pcap_can_set_rfmon(pcap_t *p);
++extern int pcap_activate(pcap_t *p);
++extern void pcap_perror(pcap_t *p, const char *prefix);
++#endif
++
+ static void seterr(char *errbuf, const char *msg)
+ {
+     size_t length = strlen(msg);
+@@ -82,16 +114,17 @@ static void null_PCAP_CLOSE(void *hPcap)
+     UNUSEDPARM(hPcap);
+ }
+ 
++
+ #ifdef STATICPCAP
+-static pcap_t *(*null_PCAP_CREATE)(const char *source, char *errbuf);
+-static int (*null_PCAP_SET_SNAPLEN)(pcap_t *p, int snaplen);
+-static int (*null_PCAP_SET_PROMISC)(pcap_t *p, int promisc);
+-static int (*null_PCAP_SET_TIMEOUT)(pcap_t *p, int to_ms);
+-static int (*null_PCAP_SET_IMMEDIATE_MODE)(pcap_t *p, int immediate_mode);
+-static int (*null_PCAP_SET_BUFFER_SIZE)(pcap_t *p, int buffer_size);
+-static int (*null_PCAP_SET_RFMON)(pcap_t *p, int rfmon);
+-static int (*null_PCAP_CAN_SET_RFMON)(pcap_t *p);
+-static int (*null_PCAP_ACTIVATE)(pcap_t *p);
++static pcap_t *null_PCAP_CREATE(const char *source, char *errbuf) {return pcap_create(source, errbuf);}
++static int null_PCAP_SET_SNAPLEN(pcap_t *p, int snaplen) {return pcap_set_snaplen(p, snaplen);}
++static int null_PCAP_SET_PROMISC(pcap_t *p, int promisc) {return pcap_set_promisc(p, promisc);}
++static int null_PCAP_SET_TIMEOUT(pcap_t *p, int to_ms) {return pcap_set_timeout(p, to_ms);}
++static int null_PCAP_SET_IMMEDIATE_MODE(pcap_t *p, int immediate_mode) {return pcap_set_immediate_mode(p, immediate_mode);}
++static int null_PCAP_SET_BUFFER_SIZE(pcap_t *p, int buffer_size) {return pcap_set_buffer_size(p, buffer_size);}
++static int null_PCAP_SET_RFMON(pcap_t *p, int rfmon) {return pcap_set_rfmon(p, rfmon);}
++static int null_PCAP_CAN_SET_RFMON(pcap_t *p) {return pcap_can_set_rfmon(p);}
++static int null_PCAP_ACTIVATE(pcap_t *p) {return pcap_activate(p);}
+ #else
+ static pcap_t *null_PCAP_CREATE(const char *source, char *errbuf) {return 0;}
+ static int null_PCAP_SET_SNAPLEN(pcap_t *p, int snaplen) {return 0;}
